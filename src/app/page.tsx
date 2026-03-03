@@ -4,7 +4,11 @@ import dynamic from "next/dynamic";
 import { useState, useCallback } from "react";
 import SearchForm from "@/components/SearchForm";
 import ProviderList from "@/components/ProviderList";
-import type { Provider, SearchParams, ProvidersResponse } from "@/types/provider";
+import type {
+  Provider,
+  SearchParams,
+  ProvidersResponse,
+} from "@/types/provider";
 
 // Leaflet requires the browser — load the Map component client-side only
 const Map = dynamic(() => import("@/components/Map"), {
@@ -17,7 +21,7 @@ const Map = dynamic(() => import("@/components/Map"), {
 });
 
 const DEFAULT_PARAMS: SearchParams = {
-  zip_code: "07030",
+  zip_code: "",
   page: 1,
   page_size: 20,
   radius: 20,
@@ -32,7 +36,10 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [params, setParams] = useState<SearchParams>(DEFAULT_PARAMS);
   const [error, setError] = useState<string | null>(null);
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [userLocation, setUserLocation] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
 
   const search = useCallback(async (newParams: SearchParams) => {
     setLoading(true);
@@ -66,7 +73,7 @@ export default function Home() {
 
   const handlePageChange = useCallback(
     (page: number) => search({ ...params, page }),
-    [params, search]
+    [params, search],
   );
 
   return (
@@ -80,7 +87,9 @@ export default function Home() {
           <h1 className="text-lg font-bold leading-tight">
             Clover Health Provider Map
           </h1>
-          <p className="text-green-300 text-xs">New Jersey In-Network Providers</p>
+          <p className="text-green-300 text-xs">
+            New Jersey In-Network Providers
+          </p>
         </div>
 
         {/* Marker-type legend (compact, header) */}

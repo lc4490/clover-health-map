@@ -22,7 +22,7 @@ const RADIUS_OPTIONS = [5, 10, 20, 50];
 async function reverseGeocodeZip(lat: number, lng: number): Promise<string> {
   const res = await fetch(
     `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
-    { headers: { "Accept-Language": "en" } }
+    { headers: { "Accept-Language": "en" } },
   );
   if (!res.ok) throw new Error("Reverse geocode failed");
   const data = await res.json();
@@ -40,7 +40,7 @@ export default function SearchForm({
   const [zip, setZip] = useState(initialParams.zip_code);
   const [radius, setRadius] = useState(initialParams.radius);
   const [types, setTypes] = useState<globalThis.Set<string>>(
-    new globalThis.Set(initialParams.provider_types)
+    new globalThis.Set(initialParams.provider_types),
   );
   const [sort, setSort] = useState(initialParams.sort);
   const [q, setQ] = useState(initialParams.q ?? "");
@@ -99,7 +99,9 @@ export default function SearchForm({
             q: q.trim() || undefined,
           });
         } catch {
-          setLocError("Failed to look up your ZIP code. Try entering it manually.");
+          setLocError(
+            "Failed to look up your ZIP code. Try entering it manually.",
+          );
         } finally {
           setLocating(false);
         }
@@ -109,10 +111,12 @@ export default function SearchForm({
         if (err.code === err.PERMISSION_DENIED) {
           setLocError("Location permission denied. Enter a ZIP code manually.");
         } else {
-          setLocError("Could not get your location. Enter a ZIP code manually.");
+          setLocError(
+            "Could not get your location. Enter a ZIP code manually.",
+          );
         }
       },
-      { timeout: 10_000 }
+      { timeout: 10_000 },
     );
   };
 
@@ -147,7 +151,7 @@ export default function SearchForm({
             onChange={(e) => setZip(e.target.value)}
             pattern="\d{5}"
             maxLength={5}
-            placeholder="07030"
+            placeholder="000000"
             required
             className="border border-gray-300 rounded px-2 py-1 text-sm w-20 focus:outline-none focus:ring-2 focus:ring-green-500"
           />
