@@ -10,6 +10,54 @@ interface MapProps {
   userLocation?: { lat: number; lng: number } | null;
 }
 
+function fmtDuration(secs: number): string {
+  const m = Math.round(secs / 60);
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} hr ${m % 60} min`;
+}
+
+interface RouteInfo {
+  drivingSecs: number;
+  walkingSecs: number;
+  distanceMi: number | null;
+  gmapsUrl: string;
+}
+
+function buildPopupHtml(p: Provider, route?: RouteInfo): string {
+  const addr = [p.address1, p.address2, `${p.city}, ${p.office_state}`]
+    .filter(Boolean)
+    .join(", ");
+
+  const routeHtml = route
+    ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb">
+        <div style="display:flex;gap:14px;font-size:12px;margin-bottom:6px;color:#374151">
+          <span>🚗 <b>${fmtDuration(route.drivingSecs)}</b>${route.distanceMi != null ? ` · ${route.distanceMi} mi` : ""}</span>
+          <span>🚶 <b>${fmtDuration(route.walkingSecs)}</b></span>
+        </div>
+        <a href="${route.gmapsUrl}" target="_blank" rel="noopener noreferrer"
+          style="display:block;text-align:center;background:#2563EB;color:#fff;border-radius:4px;padding:4px 8px;font-size:12px;font-weight:600;text-decoration:none;">
+          Open in Google Maps ↗
+        </a>
+      </div>`
+    : "";
+
+  return `
+    <div style="min-width:200px;font-family:system-ui,sans-serif;font-size:13px;line-height:1.45">
+      <div style="font-weight:700;margin-bottom:2px">${p.full_name}</div>
+      <div style="color:#555;margin-bottom:2px">${p.specialties}</div>
+      <div style="color:#444;margin-bottom:4px">${p.practice_name}</div>
+      <div style="font-size:12px;color:#666">${addr}</div>
+      ${p.phone ? `<div style="font-size:12px;color:#666;margin-top:2px">📞 ${p.phone}</div>` : ""}
+      <div style="margin-top:6px;font-size:12px;font-weight:600;color:${
+        p.is_accepting_new_patients ? "#059669" : "#DC2626"
+      }">
+        ${p.is_accepting_new_patients ? "✓ Accepting new patients" : "✗ Not accepting new patients"}
+      </div>
+      ${p.is_preferred ? '<div style="font-size:12px;color:#B45309;margin-top:2px">★ Preferred provider</div>' : ""}
+      ${routeHtml}
+    </div>`;
+}
+
 // Marker colours by provider type
 const TYPE_COLOR: Record<string, string> = {
   practitioner: "#2563EB",
@@ -28,6 +76,9 @@ export default function ProviderMap({ providers, selectedId, onSelect, userLocat
   const markersRef = useRef<globalThis.Map<string, any>>(new globalThis.Map());
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const userMarkerRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const routeLayerRef = useRef<any>(null);
+  const providerDataRef = useRef<globalThis.Map<string, Provider>>(new globalThis.Map());
   const [mapReady, setMapReady] = useState(false);
 
   // ── 1. Initialise map once ────────────────────────────────────────────────
@@ -71,9 +122,10 @@ export default function ProviderMap({ providers, selectedId, onSelect, userLocat
     const L = LRef.current;
     if (!map || !L || !mapReady) return;
 
-    // Clear old markers
+    // Clear old markers + provider data
     markersRef.current.forEach((m) => m.remove());
     markersRef.current.clear();
+    providerDataRef.current.clear();
 
     const bounds: [number, number][] = [];
 
@@ -100,31 +152,13 @@ export default function ProviderMap({ providers, selectedId, onSelect, userLocat
         popupAnchor: [0, -16],
       });
 
-      const addr = [p.address1, p.address2, `${p.city}, ${p.office_state}`]
-        .filter(Boolean)
-        .join(", ");
-
-      const popup = `
-        <div style="min-width:190px;font-family:system-ui,sans-serif;font-size:13px;line-height:1.45">
-          <div style="font-weight:700;margin-bottom:2px">${p.full_name}</div>
-          <div style="color:#555;margin-bottom:2px">${p.specialties}</div>
-          <div style="color:#444;margin-bottom:4px">${p.practice_name}</div>
-          <div style="font-size:12px;color:#666">${addr}</div>
-          ${p.phone ? `<div style="font-size:12px;color:#666;margin-top:2px">📞 ${p.phone}</div>` : ""}
-          <div style="margin-top:6px;font-size:12px;font-weight:600;color:${
-            p.is_accepting_new_patients ? "#059669" : "#DC2626"
-          }">
-            ${p.is_accepting_new_patients ? "✓ Accepting new patients" : "✗ Not accepting new patients"}
-          </div>
-          ${p.is_preferred ? '<div style="font-size:12px;color:#B45309;margin-top:2px">★ Preferred provider</div>' : ""}
-        </div>`;
-
       const marker = L.marker([p.lat, p.lng], { icon })
-        .bindPopup(popup)
+        .bindPopup(buildPopupHtml(p))
         .addTo(map);
 
       marker.on("click", () => onSelect(p.provider_id));
       markersRef.current.set(p.provider_id, marker);
+      providerDataRef.current.set(p.provider_id, p);
       bounds.push([p.lat, p.lng]);
     });
 
@@ -177,14 +211,78 @@ export default function ProviderMap({ providers, selectedId, onSelect, userLocat
     map.panTo([userLocation.lat, userLocation.lng], { animate: true });
   }, [userLocation, mapReady]);
 
-  // ── 4. Open popup / pan when a provider is selected from the list ─────────
+  // ── 4. Open popup / pan + draw route when a provider is selected ──────────
   useEffect(() => {
-    if (!selectedId || !mapRef.current) return;
+    const map = mapRef.current;
+    const L = LRef.current;
+
+    // Always clear the previous route
+    if (routeLayerRef.current) {
+      routeLayerRef.current.remove();
+      routeLayerRef.current = null;
+    }
+
+    if (!selectedId || !map) return;
     const marker = markersRef.current.get(selectedId);
     if (!marker) return;
+
+    const provider = providerDataRef.current.get(selectedId);
+
+    // Reset popup to base content (no route) while fetching
+    if (provider) marker.getPopup()?.setContent(buildPopupHtml(provider));
     marker.openPopup();
-    mapRef.current.panTo(marker.getLatLng(), { animate: true });
-  }, [selectedId]);
+    map.panTo(marker.getLatLng(), { animate: true });
+
+    // Fetch driving + walking routes if we have the user's location
+    if (!userLocation || !L || !provider) return;
+
+    const { lat: uLat, lng: uLng } = userLocation;
+    const { lat: pLat, lng: pLng } = marker.getLatLng();
+    const coords = `${uLng},${uLat};${pLng},${pLat}`;
+    const osrm = (profile: string, full: boolean) =>
+      `https://router.project-osrm.org/route/v1/${profile}/${coords}?overview=${full ? "full&geometries=geojson" : "false"}`;
+
+    Promise.all([
+      fetch(osrm("driving", true)).then((r) => r.json()),
+      fetch(osrm("foot", false)).then((r) => r.json()),
+    ])
+      .then(([driveData, walkData]) => {
+        if (!mapRef.current || !LRef.current) return;
+
+        // Draw the driving route polyline
+        const geojson = driveData?.routes?.[0]?.geometry;
+        if (geojson) {
+          routeLayerRef.current = LRef.current
+            .geoJSON(geojson, {
+              style: { color: "#2563EB", weight: 4, opacity: 0.75, dashArray: "6 4" },
+            })
+            .addTo(mapRef.current);
+        }
+
+        // Update popup with travel times + Google Maps link
+        const distanceM: number | undefined = driveData?.routes?.[0]?.distance;
+        const drivingSecs: number | undefined = driveData?.routes?.[0]?.duration;
+        const walkingSecs: number | undefined = walkData?.routes?.[0]?.duration;
+
+        if (drivingSecs != null && walkingSecs != null) {
+          const gmapsUrl =
+            `https://www.google.com/maps/dir/?api=1` +
+            `&origin=${uLat},${uLng}&destination=${pLat},${pLng}&travelmode=driving`;
+
+          marker.getPopup()?.setContent(
+            buildPopupHtml(provider, {
+              drivingSecs,
+              walkingSecs,
+              distanceMi: distanceM != null ? Math.round((distanceM / 1609.34) * 10) / 10 : null,
+              gmapsUrl,
+            }),
+          );
+          // Refresh open popup so Leaflet repaints it
+          if (marker.isPopupOpen()) marker.openPopup();
+        }
+      })
+      .catch(() => {/* silently ignore routing errors */});
+  }, [selectedId, userLocation]);
 
   return (
     <div className="relative w-full h-full">
